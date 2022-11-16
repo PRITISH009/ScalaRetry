@@ -26,9 +26,14 @@ object RetryUsage extends App {
     }
   }
 
-  retry(() => flakyFunction) match {
-    case Left(exception: Throwable) => println(exception.getMessage)
+  retry(exceptionList = Seq(InterruptedException(), InterruptedIOException(), SocketException()))(() => flakyFunction) match {
+    case Left(exception: Exception) => println(exception.getMessage)
     case Right(x: String) => println(x)
   }
-
+  
+  val exceptionList = Seq(InterruptedException(), InterruptedIOException(), SocketException())
+  
+  def retryPartialFunction = retry(exceptionList = exceptionList)
+  // The above function could be used as per the user's desires.
+  
 }

@@ -16,20 +16,20 @@ object RetryUtil extends App {
    * Grouped Transient Exceptions with functionality to add more exceptions to retry on.
    * @param additionalExceptions Seq of Exception Objects.
    */
-  sealed case class TransientExceptions(additionalExceptions: Seq[Throwable] = Seq.empty[Throwable]) {
-    private val defaultExceptions = Seq(SocketException(), InterruptedIOException(), TransientInterruptedException())
-    val exceptionTypeList: Seq[String] = extractType((defaultExceptions ++ additionalExceptions) : _*)
+  sealed case class RetryExceptionList(exceptionList: Seq[Exception] = Seq.empty[Exception]) {
+
+    val exceptionTypeList: Seq[String] = extractType(exceptionList : _*)
 
     private def extractType(exceptionList: Throwable*): Seq[String] = exceptionList.map(extractType)
 
     private def extractType(exception: Throwable): String = exception.getClass.toString.split('.').last
 
-    def ->:(exception:Throwable): Boolean = exceptionTypeList.contains(extractType(exception))
+    def ->:(exception:Exception): Boolean = exceptionTypeList.contains(extractType(exception))
   }
 
   /**
    * Retry Function to retry any function passed as a parameter along with other arguments like
-   * numRetries, retryFactor, retryIncrementer and additionalExceptions which if encountered still calls for a retry.
+   * numRetries, retryFactor, retryIncrementer and exceptionList which if encountered calls for a retry.
    *
    * Example -
    *
@@ -39,37 +39,32 @@ object RetryUtil extends App {
    *
    * def connection(port: Int, IpAddress: String): Boolean = ???
    *
+   * You have the ability to create a partially applied function as -
    *
-   * Then to retry "connection" function we need to pass it via a lambda function as follows -
+   * you can define an exceptionList on which you want to create a partially applied function as follows -
    *
+   * val exceptionList = Seq(SocketException(), InterruptedException(), InterruptedIOException())
    *
-   * // if you want to use default parameters for retry
+   * val partiallyAppliedRetryFunction = retry(numRetries = 4, retryFactor = 20000, exceptionList = exceptionList)
    *
-   * retry(() => connection(8080,"0.0.0.0"))
+   * this partially applied function can be used to retry any function with the same parameter list.
    *
+   * partiallyAppliedRetryFunction(() => connection)
    *
-   * // if you want use other retry arguments
-   *
-   * retry(function = () => connection(8080, "0.0.0.0"), numRetries = 5, retryFactor = 5, retryIncrementer = 3)
-   *
-   *
-   * The return type of this retry function is Either[Throwable, F] where F is the return type of "connection" i.e Boolean
-   * in this case.
-   *
-   * @param function function to retry
    * @param numRetries number of retries (default value 3)
-   * @param retryFactor wait time before the next retry (default value 10 secs)
+   * @param retryFactor wait time before the next retry in milli seconds (default value 10 secs)
    * @param retryIncrementer multiplication factor to increment retryFactor for each retry.
-   * @param additionalExceptions List of Additional Exceptions for which retry needs to be processed.
+   * @param exceptionList List of Exceptions for which retry needs to be processed.
+   * @param function function to retry
    * @tparam F Generic Type to represent return type of the function passed. (auto inferred)
-   * @return Either an Exception (in case of non transient exceptions or exceptions occurring even after retry) or the function result.
+   * @return Either an exception or the function result after specified number of retries (if required)
    */
   @tailrec
-  final def retry[F](function: () => F,
-                     numRetries: Int = 3,
-                     retryFactor: Int = 10,
-                     retryIncrementer: Int = 2,
-                     additionalExceptions: Seq[Throwable] = Seq.empty[Throwable]): Either[Throwable, F] =
+  final def retry[F](numRetries: Int = 3,
+                     retryFactor: Long = 10000,
+                     retryIncrementer: Float = 2.0,
+                     exceptionList: Seq[Exception] = Seq.empty[Exception])
+                    (function: () => F): Either[Exception, F] =
     Try {
       try {
         println("Trying Function\n")
@@ -80,14 +75,14 @@ object RetryUtil extends App {
       }
     } match {
       case Success(x) => Right(x)
-      case Failure(exception) if exception ->: TransientExceptions(additionalExceptions) & numRetries > 0 => {
+      case Failure(exception: Exception) if exception ->: RetryExceptionList(exceptionList) & numRetries > 0 => {
         println(s"Exception - ${exception.getMessage} Caught")
         println(s"Waiting for ${retryFactor} secs\n")
         Thread.sleep(retryFactor * 1000)
         println("Retrying...\n")
-        retry(function, numRetries - 1, retryFactor * retryIncrementer, retryIncrementer, additionalExceptions)
+        retry(numRetries - 1, (retryFactor * retryIncrementer).toLong, retryIncrementer, exceptionList)(function)
       }
-      case Failure(exception) => {
+      case Failure(exception: Exception) => {
         println("Exception Caught even after retrying")
         println("Returning Exception")
         Left(exception)
